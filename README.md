@@ -1,109 +1,123 @@
 # k8svdi
 
-Escritorios Linux en el navegador sobre **kind + OrbStack**. Cada usuario hace login con **Keycloak** y obtiene su propio pod con XFCE + noVNC, que se destruye al hacer logout o apagar.
+Linux desktops in the browser on **kind + OrbStack**. Each user signs in with **Keycloak** and gets their own XFCE + noVNC pod, which is destroyed on logout or shutdown.
 
-## Requisitos
+## Requirements
 
-- macOS con [OrbStack](https://orbstack.dev) arrancado.
-- `kubectl`, `docker`. `kind` y `helm` se instalan con Homebrew si faltan.
+- macOS with [OrbStack](https://orbstack.dev) running.
+- `kubectl`, `docker`. `kind` and `helm` are installed with Homebrew if missing.
 
-## Uso
+## Usage
 
 ```bash
-./scripts/up.sh       # levanta todo (idempotente): cluster, ingress, gateway, Keycloak, portal
-./scripts/info.sh     # URLs y credenciales
-./scripts/e2e-test.sh # test end-to-end: login -> pod -> escritorio -> logout/apagar -> pod borrado
-./scripts/audit.sh    # auditoría: login, logout, desktop_start, desktop_stop
-./scripts/down.sh     # destruye el cluster (conserva .secrets/)
+./scripts/up.sh       # brings everything up (idempotent): cluster, ingress, gateway, Keycloak, portal
+./scripts/info.sh     # URLs and credentials
+./scripts/e2e-test.sh # end-to-end test: login -> pod -> desktop -> logout/shutdown -> pod deleted
+./scripts/audit.sh    # audit trail: login, logout, desktop_start, desktop_stop
+./scripts/down.sh     # destroys the cluster (keeps .secrets/)
 ```
 
-Abre **https://vdi.orb.local** y entra con un usuario de `./scripts/info.sh`.
+Open **https://vdi.orb.local** and sign in with a user from `./scripts/info.sh`.
 
-## Arquitectura
+## Architecture
 
+```mermaid
+flowchart LR
+    user["Browser"] -->|"HTTPS<br/>*.vdi.orb.local"| orb["OrbStack<br/>TLS, CA trusted on the Mac"]
+    orb --> gw["vdi-gw<br/>socat"]
+
+    subgraph kind["kind cluster"]
+        ing["ingress-nginx"]
+        kc["Keycloak<br/>realm vdi"]
+        hub["JupyterHub<br/>KubeSpawner"]
+        subgraph desk["Per-user desktop"]
+            pod["pod jupyter-&lt;user&gt;<br/>XFCE + TigerVNC + noVNC"]
+            pvc[("PVC claim-&lt;user&gt;<br/>/home/jovyan")]
+        end
+        ing -->|"keycloak.vdi.orb.local"| kc
+        ing -->|"vdi.orb.local"| hub
+        hub -->|"spawns on login,<br/>deletes on logout"| pod
+        pod --- pvc
+        hub -.->|"OIDC backchannel<br/>http://keycloak.keycloak.svc:8080"| kc
+    end
+
+    gw --> ing
 ```
-Navegador ─https─► OrbStack (TLS, CA de confianza en el Mac)
-                    └─ vdi-gw (socat, *.vdi.orb.local) ─► ingress-nginx (nodo kind)
-                         ├─ keycloak.vdi.orb.local → Keycloak (realm "vdi")
-                         └─ vdi.orb.local          → JupyterHub ─ KubeSpawner ─► pod jupyter-<user>
-                                                                                 XFCE + TigerVNC + noVNC
-                                                                                 /home en PVC claim-<user>
-```
 
-| Componente | Detalle |
+| Component | Details |
 |---|---|
-| Gateway | OrbStack enruta HTTPS al puerto expuesto del contenedor y los nodos kind no admiten labels: el contenedor `vdi-gw` posee el dominio `*.vdi.orb.local` y reenvía al ingress. |
-| Keycloak | Modo dev; el realm se reimporta en cada arranque desde `keycloak/realm-vdi.json.tpl` + `keycloak/users.txt`. Cliente OIDC `jupyterhub` con claim `groups`. |
-| Backchannel | El Hub habla con Keycloak por `http://keycloak.keycloak.svc:8080` (los pods no confían en la CA de OrbStack); el issuer sigue siendo la URL pública https. |
-| Portal | Chart `deploy/helm/k8svdi` (JupyterHub 4.4.3) con auto-login, `shutdown_on_logout` y Keycloak o Entra. |
-| Escritorio | `images/desktop`: base-notebook + XFCE + TigerVNC + `jupyter-remote-desktop-proxy` + Epiphany (navegador ligero). |
+| Gateway | OrbStack routes HTTPS to a container's exposed port, and kind nodes cannot carry labels, so the `vdi-gw` container owns the `*.vdi.orb.local` domain and forwards to the ingress. |
+| Keycloak | Dev mode; the realm is re-imported on every start from `keycloak/realm-vdi.json.tpl` + `keycloak/users.txt`. OIDC client `jupyterhub` with a `groups` claim. |
+| Backchannel | The Hub talks to Keycloak over `http://keycloak.keycloak.svc:8080` (pods do not trust the OrbStack CA); the issuer is still the public https URL. |
+| Portal | `deploy/helm/k8svdi` chart (JupyterHub 4.4.3) with auto-login, `shutdown_on_logout`, and Keycloak or Entra ID. |
+| Desktop | `images/desktop`: base-notebook + XFCE + TigerVNC + `jupyter-remote-desktop-proxy` + Epiphany (lightweight browser). |
 
-## Chart de Helm y Argo CD
+## Helm chart and Argo CD
 
-`deploy/helm/k8svdi` es un chart paraguas sobre el chart oficial de JupyterHub (4.4.3). El laboratorio lo usa (`scripts/30-portal.sh`) y sirve igual para producción.
+`deploy/helm/k8svdi` is an umbrella chart over the official JupyterHub chart (4.4.3). The lab uses it (`scripts/30-portal.sh`), and the same chart works for production.
 
-| Valor | Uso |
+| Value | Purpose |
 |---|---|
-| `host` | Hostname público del portal |
-| `auth.provider` | `keycloak` o `entra` |
-| `auth.clientId`, `auth.clientSecret` | Cliente OIDC. Sin `clientSecret`, el chart espera un Secret `k8svdi-oidc` (clave `client-secret`) creado fuera (External Secrets, Sealed Secrets...) |
-| `auth.allowedGroups`, `auth.adminGroups` | Grupos de Keycloak o App Roles de Entra |
-| `auth.keycloak.realmUrl`, `internalRealmUrl` | URL pública del realm y, opcional, URL interna para el backchannel |
-| `auth.entra.tenantId`, `groupsClaim` | Tenant y claim de autorización (`roles` recomendado) |
-| `profiles` | Perfiles de escritorio por grupo/rol |
-| `audit.enabled` | Auditoría |
-| `jupyterhub.*` | Se pasa tal cual al chart de JupyterHub (ingress, TLS, imagen, storage, culler...) |
+| `host` | Public hostname of the portal |
+| `auth.provider` | `keycloak` or `entra` |
+| `auth.clientId`, `auth.clientSecret` | OIDC client. Without `clientSecret`, the chart expects a `k8svdi-oidc` Secret (key `client-secret`) created elsewhere (External Secrets, Sealed Secrets...) |
+| `auth.allowedGroups`, `auth.adminGroups` | Keycloak groups or Entra ID App Roles |
+| `auth.keycloak.realmUrl`, `internalRealmUrl` | Public realm URL and, optionally, an internal URL for the backchannel |
+| `auth.entra.tenantId`, `groupsClaim` | Tenant and authorisation claim (`roles` recommended) |
+| `profiles` | Desktop profiles per group or role |
+| `audit.enabled` | Audit logging |
+| `jupyterhub.*` | Passed as-is to the JupyterHub chart (ingress, TLS, image, storage, culler...) |
 
-Ficheros de valores en `deploy/values/`:
+Values files in `deploy/values/`:
 
-- `lab-keycloak.yaml`: este laboratorio.
-- `prod-entra.example.yaml`: Entra directo. App Registration con redirect `https://<host>/hub/oauth_callback` y App Roles `vdi-users` / `vdi-admins`.
-- `prod-keycloak.example.yaml`: Keycloak. Para que Keycloak delegue el login en Entra, fusiona `keycloak/entra-broker.example.json` en el realm; los App Roles de Entra se mapean a grupos y el portal no cambia.
+- `lab-keycloak.yaml`: this lab.
+- `prod-entra.example.yaml`: Entra ID directly. App Registration with redirect URI `https://<host>/hub/oauth_callback` and App Roles `vdi-users` / `vdi-admins`.
+- `prod-keycloak.example.yaml`: Keycloak. To have Keycloak delegate sign-in to Entra ID, merge `keycloak/entra-broker.example.json` into the realm; Entra App Roles are mapped to groups and the portal does not change.
 
 ```bash
 helm dependency build deploy/helm/k8svdi
 helm upgrade --install vdi deploy/helm/k8svdi -n vdi --create-namespace -f deploy/values/prod-entra.yaml
 ```
 
-Argo CD: `deploy/argocd/k8svdi-entra.yaml` y `k8svdi-keycloak.yaml` (ajusta `repoURL` y copia el `.example.yaml` correspondiente). La configuración de k8svdi solo se lee al arrancar el Hub; un hook post-upgrade (PostSync en Argo) lo reinicia en cada actualización sin afectar a los escritorios abiertos.
+Argo CD: `deploy/argocd/k8svdi-entra.yaml` and `k8svdi-keycloak.yaml` (set `repoURL` and copy the matching `.example.yaml`). The k8svdi configuration is only read when the Hub starts; a post-upgrade hook (PostSync in Argo CD) restarts it on every update without affecting open desktops.
 
-## Ciclo de vida del escritorio
+## Desktop lifecycle
 
-El pod `jupyter-<user>` se borra cuando:
+The `jupyter-<user>` pod is deleted when:
 
-- el usuario hace logout del portal (también si el escritorio aún estaba arrancando);
-- cierra sesión en XFCE (`vdi-xstartup`);
-- usa el lanzador **Apagar escritorio** (`vdi-shutdown`, llama a la API del Hub);
-- lleva 30 min inactivo (idle culler).
+- the user logs out of the portal (even if the desktop was still starting);
+- they log out of XFCE (`vdi-xstartup`);
+- they use the **Shut down desktop** launcher (`vdi-shutdown`, which calls the Hub API);
+- it has been idle for 30 minutes (idle culler).
 
-El `/home/jovyan` persiste en el PVC `claim-<user>` (2 Gi). Para resetear a un usuario: `kubectl --context kind-vdi -n vdi delete pvc claim-<user>`.
+`/home/jovyan` persists on the `claim-<user>` PVC (2 Gi). To reset a user: `kubectl --context kind-vdi -n vdi delete pvc claim-<user>`.
 
-## Perfiles por grupo
+## Profiles per group
 
-| Grupo Keycloak | Perfiles |
+| Keycloak group | Profiles |
 |---|---|
-| `vdi-users` | Estándar (1 CPU / 2 GB), sin formulario |
-| `vdi-admins` | Estándar o Potente (2 CPU / 4 GB); además admin del Hub (`/hub/admin`) |
+| `vdi-users` | Standard (1 CPU / 2 GB), no selection form |
+| `vdi-admins` | Standard or Power (2 CPU / 4 GB); also Hub admin (`/hub/admin`) |
 
-Se definen en `profiles` de los valores del chart.
+They are defined under `profiles` in the chart values.
 
-## Usuarios y secretos
+## Users and secrets
 
-- Usuarios en `keycloak/users.txt` (`usuario nombre apellido grupos`). Tras editarlo: `./scripts/20-keycloak.sh`.
-- Las contraseñas se generan en el primer arranque en `.secrets/` (ignorado por git) y se reutilizan. Borra un fichero para rotarla.
+- Users live in `keycloak/users.txt` (`username firstName lastName groups`). After editing it: `./scripts/20-keycloak.sh`.
+- Passwords are generated on first start into `.secrets/` (ignored by git) and reused. Delete a file to rotate that password.
 
-## Hooks y auditoría
+## Hooks and auditing
 
-`deploy/helm/k8svdi/files/k8svdi.py` define `post_auth_hook`, `pre_spawn_hook`, `post_stop_hook` y un wrapper del logout. Cada evento se escribe como JSON en el log del Hub (`AUDIT ...`) y en `/srv/jupyterhub/audit.jsonl` (PVC del Hub).
+`deploy/helm/k8svdi/files/k8svdi.py` defines `post_auth_hook`, `pre_spawn_hook`, `post_stop_hook` and a logout wrapper. Each event is written as JSON to the Hub log (`AUDIT ...`) and to `/srv/jupyterhub/audit.jsonl` (on the Hub's PVC).
 
-## Capacidad orientativa
+## Capacity guide
 
-Un escritorio en reposo usa ~235 MB; con navegador, ~1–1,5 GB. En un nodo de 64 GB caben unos 40–50 escritorios de uso típico. Para reflejarlo en el scheduler, sube `singleuser.memory.guarantee` a ~1 G.
+An idle desktop uses about 235 MB; with a browser open, about 1 to 1.5 GB. A 64 GB node fits roughly 40 to 50 desktops under typical use. To reflect this in the scheduler, raise `singleuser.memory.guarantee` to about 1G.
 
-## Limitaciones conocidas
+## Known limitations
 
-- ingress-nginx dejó de mantenerse en marzo de 2026; candidato a sustituir por Traefik o Gateway API.
-- `NetworkPolicy` de los escritorios activadas (egress a IPs privadas bloqueado salvo el Hub).
-- Keycloak en modo dev sin base de datos persistente: los cambios hechos a mano en la consola se pierden al reiniciar.
-- El logout de Keycloak muestra una pantalla de confirmación (no se envía `id_token_hint`).
-- WebKit corre sin su sandbox (`WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1`); el aislamiento es el propio pod.
+- ingress-nginx stopped being maintained in March 2026; candidate for replacement with Traefik or the Gateway API.
+- Desktop `NetworkPolicy` is enabled (egress to private IPs is blocked, except to the Hub).
+- Keycloak runs in dev mode without a persistent database: changes made by hand in the console are lost on restart.
+- Keycloak logout shows a confirmation screen (no `id_token_hint` is sent).
+- WebKit runs without its sandbox (`WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1`); isolation comes from the pod itself.
