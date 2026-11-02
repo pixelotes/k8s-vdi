@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Keycloak with realm "vdi", OIDC client "jupyterhub" and users from keycloak/users.txt.
 source "$(dirname "$0")/lib.sh"
+require kubectl curl shasum
 
 admin_pw=$(secret keycloak-admin)
 client_secret=$(secret jupyterhub-client)

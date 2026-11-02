@@ -2,6 +2,7 @@
 # Desktop image + k8svdi chart (JupyterHub) at https://vdi.orb.local, login via Keycloak.
 source "$(dirname "$0")/lib.sh"
 require helm docker kind
+helm_repos
 
 log "Building desktop image"
 docker build -q -t vdi-desktop:dev "$ROOT/images/desktop" >/dev/null
