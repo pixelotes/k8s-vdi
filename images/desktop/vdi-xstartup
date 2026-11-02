@@ -1,0 +1,6 @@
+#!/bin/sh
+# Used by jupyter-remote-desktop-proxy (~/.vnc/xstartup). The desktop session
+# owns the pod: once it exits, shut the whole server down.
+unset SESSION_MANAGER DBUS_SESSION_BUS_ADDRESS
+dbus-launch --exit-with-session xfce4-session
+exec /usr/local/bin/vdi-shutdown

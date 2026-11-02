@@ -1,0 +1,57 @@
+{{- /*
+The hub reads k8svdi.py/config.json only at startup, so restart it after every
+upgrade (Argo CD runs this as a PostSync hook). Open desktops are not affected.
+*/ -}}
+{{- define "k8svdi.hookAnnotations" -}}
+helm.sh/hook: post-upgrade
+helm.sh/hook-weight: "-5"
+helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+{{- end }}
+{{- if .Values.hubRestartHook.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8svdi-hub-restart
+  annotations: {{- include "k8svdi.hookAnnotations" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8svdi-hub-restart
+  annotations: {{- include "k8svdi.hookAnnotations" . | nindent 4 }}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [hub]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8svdi-hub-restart
+  annotations: {{- include "k8svdi.hookAnnotations" . | nindent 4 }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: k8svdi-hub-restart}
+subjects:
+  - {kind: ServiceAccount, name: k8svdi-hub-restart, namespace: {{ .Release.Namespace }}}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k8svdi-hub-restart
+  annotations:
+    helm.sh/hook: post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      serviceAccountName: k8svdi-hub-restart
+      restartPolicy: Never
+      securityContext: {runAsNonRoot: true, runAsUser: 65534}
+      containers:
+        - name: restart
+          image: {{ .Values.hubRestartHook.image }}
+          args: [rollout, restart, deployment/hub]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+{{- end }}

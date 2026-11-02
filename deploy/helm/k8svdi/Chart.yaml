@@ -1,0 +1,10 @@
+apiVersion: v2
+name: k8svdi
+description: Browser Linux desktops per user (JupyterHub + KubeSpawner + noVNC) with Keycloak or Microsoft Entra ID login.
+type: application
+version: 0.1.0
+appVersion: "5.5.3"
+dependencies:
+  - name: jupyterhub
+    version: 4.4.3
+    repository: https://hub.jupyter.org/helm-chart/

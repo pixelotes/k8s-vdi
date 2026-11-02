@@ -1,0 +1,21 @@
+# Local lab (kind + OrbStack). Used by scripts/30-portal.sh; the client secret is passed with --set.
+host: vdi.orb.local
+auth:
+  provider: keycloak
+  keycloak:
+    realmUrl: https://keycloak.vdi.orb.local/realms/vdi
+    internalRealmUrl: http://keycloak.keycloak.svc:8080/realms/vdi
+jupyterhub:
+  ingress:
+    hosts: [vdi.orb.local]
+  singleuser:
+    image: {name: vdi-desktop, tag: dev}
+    storage:
+      dynamic: {storageClass: standard}
+    memory: {guarantee: 512M}
+  prePuller:
+    hook: {enabled: false}
+    continuous: {enabled: false}
+  scheduling:
+    userScheduler: {enabled: false}
+    userPlaceholder: {enabled: false}

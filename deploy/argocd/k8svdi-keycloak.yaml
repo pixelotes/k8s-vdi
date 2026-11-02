@@ -1,0 +1,26 @@
+# Argo CD Application: k8svdi authenticating via Keycloak (Keycloak may broker Entra, see keycloak/entra-broker.example.json).
+# Copy deploy/values/prod-keycloak.example.yaml to prod-keycloak.yaml and fill it in.
+# Provide Secret vdi/k8svdi-oidc (key client-secret) out of band (External Secrets, Sealed Secrets...).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: k8svdi
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  source:
+    repoURL: https://git.example.com/platform/k8svdi.git   # <- this repository
+    targetRevision: main
+    path: deploy/helm/k8svdi
+    helm:
+      releaseName: vdi
+      valueFiles:
+        - ../../values/prod-keycloak.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: vdi
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions: [CreateNamespace=true]
+  # The chart's post-upgrade hook (Argo: PostSync) restarts the hub so config changes apply.

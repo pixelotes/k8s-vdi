@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Apagar escritorio
+Comment=Cierra la sesion y destruye el escritorio
+Exec=/usr/local/bin/vdi-shutdown
+Icon=system-shutdown
+Categories=System;

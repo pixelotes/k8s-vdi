@@ -1,0 +1,12 @@
+{{- $p := .Values.auth.provider -}}
+{{- if not (has $p (list "keycloak" "entra")) }}{{ fail "auth.provider must be keycloak or entra" }}{{ end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k8svdi-hub-config
+  labels: {app.kubernetes.io/name: k8svdi, app.kubernetes.io/instance: {{ .Release.Name }}}
+data:
+  k8svdi.py: |
+{{ .Files.Get "files/k8svdi.py" | indent 4 }}
+  config.json: |
+    {{- dict "host" .Values.host "auth" (omit .Values.auth "clientSecret") "profiles" .Values.profiles "audit" .Values.audit | toPrettyJson | nindent 4 }}

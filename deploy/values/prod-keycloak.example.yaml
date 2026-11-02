@@ -1,0 +1,19 @@
+# Production with Keycloak (optionally brokering Entra, see keycloak/entra-broker.example.json).
+# Secret "k8svdi-oidc" (key client-secret) is provided externally.
+host: vdi.example.com
+auth:
+  provider: keycloak
+  clientId: jupyterhub
+  keycloak:
+    realmUrl: https://sso.example.com/realms/vdi
+    # internalRealmUrl: http://keycloak-http.keycloak.svc/realms/vdi
+jupyterhub:
+  ingress:
+    ingressClassName: nginx
+    hosts: [vdi.example.com]
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+    tls:
+      - {hosts: [vdi.example.com], secretName: vdi-tls}
+  singleuser:
+    image: {name: myregistry.example.com/vdi-desktop, tag: "0.1.0"}

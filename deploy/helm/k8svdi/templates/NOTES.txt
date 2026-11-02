@@ -1,0 +1,6 @@
+k8svdi portal: https://{{ .Values.host }}  (auth: {{ .Values.auth.provider }})
+{{- if eq .Values.auth.provider "entra" }}
+Entra redirect URI to register: https://{{ .Values.host }}/hub/oauth_callback
+{{- else }}
+Keycloak client redirect URI: https://{{ .Values.host }}/hub/oauth_callback
+{{- end }}

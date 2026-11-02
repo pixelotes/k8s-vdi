@@ -1,0 +1,4 @@
+# username  firstName  lastName  groups(comma separated)
+alice  Alice  Admin  vdi-users,vdi-admins
+bob    Bob    User   vdi-users
+carol  Carol  User   vdi-users

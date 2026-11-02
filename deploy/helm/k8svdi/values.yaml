@@ -1,0 +1,105 @@
+# --- k8svdi settings -------------------------------------------------------
+# Public hostname of the portal (https://<host>).
+host: vdi.example.com
+
+auth:
+  # keycloak | entra
+  provider: keycloak
+  # The client secret lives in Secret "k8svdi-oidc", key "client-secret".
+  # Set clientSecret to let the chart create it, or leave it empty and provide
+  # that Secret yourself (External Secrets / Key Vault / Sealed Secrets).
+  clientSecret: ""
+  clientId: jupyterhub
+  # Who may log in / is Hub admin. Keycloak: group names. Entra: App Role values.
+  allowedGroups: [vdi-users]
+  adminGroups: [vdi-admins]
+
+  keycloak:
+    # Browser-facing realm URL (also the token issuer).
+    realmUrl: https://keycloak.example.com/realms/vdi
+    # Optional in-cluster URL for token/userinfo calls (avoids hairpin / private CAs).
+    internalRealmUrl: ""
+    # Ask Keycloak to skip its logout confirmation page.
+    logoutRedirect: true
+
+  entra:
+    tenantId: "00000000-0000-0000-0000-000000000000"
+    # Claim holding the authorization values. "roles" = App Roles (recommended:
+    # readable names and no 200-group overage). "groups" = group object IDs.
+    groupsClaim: roles
+
+# Desktop profiles. "groups" uses the same values as auth.allowedGroups.
+# A user with a single matching profile gets no selection form.
+profiles:
+  - slug: standard
+    displayName: Estandar
+    description: 1 CPU, 2 GB RAM
+    default: true
+    groups: [vdi-users]
+    override: {cpu_limit: 1, mem_limit: 2G}
+  - slug: power
+    displayName: Potente
+    description: 2 CPU, 4 GB RAM
+    groups: [vdi-admins]
+    override: {cpu_limit: 2, mem_limit: 4G, mem_guarantee: 1G}
+
+audit:
+  # JSON lines on hub stdout ("AUDIT {...}") and in /srv/jupyterhub/audit.jsonl.
+  enabled: true
+
+# Restart the hub after upgrades so k8svdi config changes apply (Helm post-upgrade / Argo PostSync).
+hubRestartHook:
+  enabled: true
+  image: registry.k8s.io/kubectl:v1.37.0
+
+# --- Upstream JupyterHub chart (https://z2jh.jupyter.org) --------------------
+# Anything here is passed through. Host/ingress/image must be set here too
+# because Helm can't template a dependency's values.
+jupyterhub:
+  fullnameOverride: ""
+  hub:
+    config:
+      JupyterHub:
+        shutdown_on_logout: true
+      Spawner:
+        default_url: /desktop
+        poll_interval: 10
+        http_timeout: 120
+        start_timeout: 300
+        server_token_scopes: ["users:activity!user", "access:servers!server", "servers!server"]
+    # k8svdi config is mounted into jupyterhub_config.d by templates/hub-config.yaml.
+    extraVolumes:
+      - name: k8svdi-config
+        configMap: {name: k8svdi-hub-config}
+      - name: k8svdi-oidc
+        secret: {secretName: k8svdi-oidc}
+    extraVolumeMounts:
+      - {name: k8svdi-config, mountPath: /usr/local/etc/jupyterhub/jupyterhub_config.d/k8svdi.py, subPath: k8svdi.py}
+      - {name: k8svdi-config, mountPath: /etc/k8svdi/config.json, subPath: config.json}
+      - {name: k8svdi-oidc, mountPath: /etc/k8svdi/oidc, readOnly: true}
+  proxy:
+    service: {type: ClusterIP}
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts: [vdi.example.com]
+    tls: []
+  singleuser:
+    image:
+      name: ghcr.io/example/vdi-desktop
+      tag: "0.1.0"
+      pullPolicy: IfNotPresent
+    cmd: jupyterhub-singleuser
+    storage:
+      type: dynamic
+      capacity: 2Gi
+      dynamic:
+        storageClass: ""
+    memory: {guarantee: 1G, limit: 2G}
+    cpu: {guarantee: 0.25, limit: 1}
+    networkPolicy:
+      enabled: true
+  cull:
+    enabled: true
+    timeout: 1800
+    every: 60

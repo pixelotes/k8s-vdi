@@ -1,0 +1,6 @@
+#!/bin/sh
+# Asks the Hub to stop this server; KubeSpawner then deletes the pod.
+# Needs the "servers!server" scope in the server token (Spawner.server_token_scopes in the chart values).
+curl -sf -X DELETE -H "Authorization: token ${JUPYTERHUB_API_TOKEN}" \
+  "${JUPYTERHUB_API_URL}/users/${JUPYTERHUB_USER}/server" \
+  || kill -TERM 1
